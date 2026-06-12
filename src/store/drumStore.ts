@@ -6,6 +6,10 @@ function generateNoteId(): string {
   return `note_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
+function generateRhythmId(): string {
+  return `rhythm_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
+
 interface DrumState {
   audioContext: AudioContext | null;
   setAudioContext: (ctx: AudioContext | null) => void;
@@ -30,7 +34,7 @@ interface DrumState {
   scheduledTimeouts: number[];
   scheduledAudioIds: number[];
 
-  startRecording: (withCountIn?: boolean) => void;
+  startRecording: (withCountIn?: boolean, forcePlayhead?: boolean) => void;
   stopRecording: () => void;
   startPlayback: (loop?: boolean) => void;
   stopPlayback: () => void;
@@ -112,11 +116,11 @@ export const useDrumStore = create<DrumState>((set, get) => ({
   scheduledTimeouts: [],
   scheduledAudioIds: [],
 
-  startRecording: (withCountIn = false) => {
+  startRecording: (withCountIn = false, forcePlayhead = false) => {
     const state = get();
     const now = performance.now();
 
-    const isPlayingAndHasRhythm = state.isPlaying && state.rhythm && state.rhythm.notes.length > 0;
+    const isPlayingAndHasRhythm = forcePlayhead || (state.isPlaying && state.rhythm && state.rhythm.notes.length > 0);
 
     if (!state.rhythm || state.rhythm.notes.length === 0) {
       set({
@@ -125,6 +129,7 @@ export const useDrumStore = create<DrumState>((set, get) => ({
         recordingUsesPlayhead: false,
         scheduledTimeouts: [],
         rhythm: {
+          id: generateRhythmId(),
           version: '1.0',
           name: '我的节奏',
           createdAt: Date.now(),
@@ -147,7 +152,6 @@ export const useDrumStore = create<DrumState>((set, get) => ({
           isRecording: true,
           recordingStartTime: now,
           recordingUsesPlayhead: isPlayingAndHasRhythm,
-          scheduledTimeouts: [],
           rhythm: {
             ...state.rhythm,
             bpm: state.metronomeBpm,
@@ -201,11 +205,7 @@ export const useDrumStore = create<DrumState>((set, get) => ({
 
   addNote: (note) => {
     const state = get();
-    let noteTime = note.time;
-
-    if (state.recordingUsesPlayhead && state.isLooping && state.rhythm) {
-      noteTime = state.playheadPosition;
-    }
+    const noteTime = note.time;
 
     const newNote: Note = {
       ...note,
@@ -226,6 +226,7 @@ export const useDrumStore = create<DrumState>((set, get) => ({
     } else {
       set({
         rhythm: {
+          id: generateRhythmId(),
           version: '1.0',
           name: '我的节奏',
           createdAt: Date.now(),

@@ -31,6 +31,7 @@ export interface Note {
 }
 
 export interface RhythmData {
+  id: string;
   version: string;
   name: string;
   createdAt: number;

@@ -2,61 +2,48 @@ import { useEffect, useCallback, useRef } from 'react';
 import { useDrumStore } from '@/store/drumStore';
 import {
   ensureAudioContext,
-  getAudioContext,
-  getGainNodes,
   setLoopStartTime,
   getLoopStartPerfTime,
   getLoopStartAudioTime,
   getScheduledNoteIds,
   clearScheduledNotes,
   scheduleDrumAt,
+  getAudioContext,
 } from '@/audio/engine';
-import { DRUM_CONFIGS } from '@/utils/drumConfig';
 import { Note } from '@/types';
 
 const SCHEDULE_AHEAD_TIME = 0.1;
 const LOOKAHEAD_INTERVAL = 25;
+const PLAYHEAD_INTERVAL = 16;
+
+let globalSchedulerTimer: number | null = null;
+let globalPlayheadTimer: number | null = null;
+let globalIsRunning = false;
+let globalRhythmId: string | null = null;
 
 export function usePlayback() {
-  const isPlaying = useDrumStore(state => state.isPlaying);
-  const isLooping = useDrumStore(state => state.isLooping);
-  const isRecording = useDrumStore(state => state.isRecording);
-  const rhythm = useDrumStore(state => state.rhythm);
-  const playbackSpeed = useDrumStore(state => state.playbackSpeed);
-  const stopPlayback = useDrumStore(state => state.stopPlayback);
-  const addScheduledTimeout = useDrumStore(state => state.addScheduledTimeout);
-  const triggerPad = useDrumStore(state => state.triggerPad);
-  const releasePad = useDrumStore(state => state.releasePad);
-  const setPlayheadPosition = useDrumStore(state => state.setPlayheadPosition);
-
   const schedulerTimerRef = useRef<number | null>(null);
   const playheadTimerRef = useRef<number | null>(null);
+  const isRunningRef = useRef(false);
+  const rhythmIdRef = useRef<string | null>(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
+
+  const getStore = () => useDrumStore.getState();
 
   const getSortedNotes = useCallback((): Note[] => {
+    const { rhythm } = getStore();
     if (!rhythm || rhythm.notes.length === 0) return [];
     return [...rhythm.notes].sort((a, b) => a.time - b.time);
-  }, [rhythm]);
-
-  const getAdjustedTime = useCallback((noteTime: number): number => {
-    return noteTime / playbackSpeed / 1000;
-  }, [playbackSpeed]);
-
-  const getAdjustedDurationSec = useCallback((): number => {
-    if (!rhythm) return 0;
-    return rhythm.duration / playbackSpeed / 1000;
-  }, [rhythm, playbackSpeed]);
-
-  const getAdjustedDurationMs = useCallback((): number => {
-    if (!rhythm) return 0;
-    return rhythm.duration / playbackSpeed;
-  }, [rhythm, playbackSpeed]);
+  }, []);
 
   const scheduleNotes = useCallback(() => {
     const ctx = getAudioContext();
+    const store = getStore();
+    const { rhythm, isLooping, playbackSpeed, triggerPad, releasePad, addScheduledTimeout } = store;
     if (!ctx || !rhythm || rhythm.notes.length === 0) return;
 
     const sortedNotes = getSortedNotes();
-    const adjustedDuration = getAdjustedDurationSec();
+    const adjustedDuration = (rhythm.duration / playbackSpeed) / 1000;
     const currentAudioTime = ctx.currentTime;
     const loopStartAudio = getLoopStartAudioTime();
 
@@ -71,19 +58,20 @@ export function usePlayback() {
     while (loopAudioTime < scheduleWindowEnd) {
       for (let i = 0; i < sortedNotes.length; i++) {
         const note = sortedNotes[i];
-        const noteAudioTime = loopAudioTime + getAdjustedTime(note.time);
+        const adjustedNoteTime = (note.time / playbackSpeed) / 1000;
+        const noteAudioTime = loopAudioTime + adjustedNoteTime;
 
         if (noteAudioTime > currentAudioTime && noteAudioTime <= scheduleWindowEnd) {
           const scheduleKey = `${note.id}_${loopIndex}_${i}`;
           if (!scheduledIds.has(scheduleKey)) {
             scheduledIds.add(scheduleKey);
-
             scheduleDrumAt(note.drumId, note.velocity, noteAudioTime);
 
             const delayMs = (noteAudioTime - currentAudioTime) * 1000;
+            const drumId = note.drumId;
             const timeoutId = window.setTimeout(() => {
-              triggerPad(note.drumId);
-              setTimeout(() => releasePad(note.drumId), 150);
+              triggerPad(drumId);
+              setTimeout(() => releasePad(drumId), 150);
               scheduledIds.delete(scheduleKey);
             }, delayMs);
             addScheduledTimeout(timeoutId);
@@ -92,20 +80,21 @@ export function usePlayback() {
       }
 
       if (!isLooping) break;
-
       loopAudioTime += adjustedDuration;
       loopIndex++;
     }
-  }, [rhythm, isLooping, getSortedNotes, getAdjustedTime, getAdjustedDurationSec, triggerPad, releasePad, addScheduledTimeout]);
+  }, [getSortedNotes]);
 
   const updatePlayhead = useCallback(() => {
+    const store = getStore();
+    const { rhythm, isLooping, isRecording, playbackSpeed, setPlayheadPosition, stopPlayback } = store;
     if (!rhythm) return;
 
     const loopStart = getLoopStartPerfTime();
     if (loopStart <= 0) return;
 
     const elapsed = performance.now() - loopStart;
-    const adjustedDuration = getAdjustedDurationMs();
+    const adjustedDuration = rhythm.duration / playbackSpeed;
 
     if (isLooping) {
       const loopElapsed = ((elapsed % adjustedDuration) + adjustedDuration) % adjustedDuration;
@@ -119,57 +108,97 @@ export function usePlayback() {
         stopPlayback();
       }
     }
-  }, [rhythm, playbackSpeed, isLooping, isRecording, setPlayheadPosition, stopPlayback, getAdjustedDurationMs]);
+  }, []);
 
-  const startPlaybackEngine = useCallback(() => {
+  const stopAllTimers = useCallback(() => {
+    if (globalSchedulerTimer !== null) {
+      clearInterval(globalSchedulerTimer);
+      globalSchedulerTimer = null;
+    }
+    if (globalPlayheadTimer !== null) {
+      clearInterval(globalPlayheadTimer);
+      globalPlayheadTimer = null;
+    }
+    if (schedulerTimerRef.current !== null) {
+      clearInterval(schedulerTimerRef.current);
+      schedulerTimerRef.current = null;
+    }
+    if (playheadTimerRef.current !== null) {
+      clearInterval(playheadTimerRef.current);
+      playheadTimerRef.current = null;
+    }
+    clearScheduledNotes();
+    globalIsRunning = false;
+    globalRhythmId = null;
+    isRunningRef.current = false;
+    rhythmIdRef.current = null;
+  }, []);
+
+  const startPlayback = useCallback(() => {
     const ctx = ensureAudioContext();
+    const store = getStore();
+    const { rhythm, addScheduledTimeout } = store;
     if (!ctx || !rhythm || rhythm.notes.length === 0) return;
+
+    const rid = rhythm.id ?? 'default';
+    if (globalIsRunning && globalRhythmId === rid) {
+      return;
+    }
+
+    if (globalIsRunning) {
+      stopAllTimers();
+    }
 
     clearScheduledNotes();
 
     const startDelay = 0.05;
     const audioStartTime = ctx.currentTime + startDelay;
     const perfStartTime = performance.now() + startDelay * 1000;
-
     setLoopStartTime(audioStartTime, perfStartTime);
 
-    if (schedulerTimerRef.current) {
-      clearInterval(schedulerTimerRef.current);
-    }
-    schedulerTimerRef.current = window.setInterval(scheduleNotes, LOOKAHEAD_INTERVAL);
-    addScheduledTimeout(schedulerTimerRef.current);
+    globalSchedulerTimer = window.setInterval(scheduleNotes, LOOKAHEAD_INTERVAL);
+    globalPlayheadTimer = window.setInterval(updatePlayhead, PLAYHEAD_INTERVAL);
+    schedulerTimerRef.current = globalSchedulerTimer;
+    playheadTimerRef.current = globalPlayheadTimer;
+    addScheduledTimeout(globalSchedulerTimer);
+    addScheduledTimeout(globalPlayheadTimer);
 
-    if (playheadTimerRef.current) {
-      clearInterval(playheadTimerRef.current);
-    }
-    playheadTimerRef.current = window.setInterval(updatePlayhead, 16);
-    addScheduledTimeout(playheadTimerRef.current);
-  }, [ensureAudioContext, rhythm, scheduleNotes, updatePlayhead, addScheduledTimeout]);
-
-  const stopPlaybackEngine = useCallback(() => {
-    if (schedulerTimerRef.current) {
-      clearInterval(schedulerTimerRef.current);
-      schedulerTimerRef.current = null;
-    }
-    if (playheadTimerRef.current) {
-      clearInterval(playheadTimerRef.current);
-      playheadTimerRef.current = null;
-    }
-    clearScheduledNotes();
-  }, []);
+    globalIsRunning = true;
+    globalRhythmId = rid;
+    isRunningRef.current = true;
+    rhythmIdRef.current = rid;
+  }, [scheduleNotes, updatePlayhead, stopAllTimers]);
 
   useEffect(() => {
-    if (!isPlaying || !rhythm || rhythm.notes.length === 0) {
-      stopPlaybackEngine();
-      return;
-    }
+    const checkState = () => {
+      const store = getStore();
+      const { isPlaying, rhythm } = store;
 
-    startPlaybackEngine();
+      if (!isPlaying || !rhythm || rhythm.notes.length === 0) {
+        if (globalIsRunning) {
+          stopAllTimers();
+        }
+        return;
+      }
+
+      const rid = rhythm.id ?? 'default';
+      if (!globalIsRunning || globalRhythmId !== rid) {
+        startPlayback();
+      }
+    };
+
+    unsubscribeRef.current = useDrumStore.subscribe(checkState);
+    checkState();
+
+    const interval = window.setInterval(checkState, 100);
 
     return () => {
-      stopPlaybackEngine();
+      if (unsubscribeRef.current) {
+        unsubscribeRef.current();
+      }
+      clearInterval(interval);
     };
-  }, [isPlaying, rhythm, startPlaybackEngine, stopPlaybackEngine]);
+  }, [startPlayback, stopAllTimers]);
 
   return { scheduleNotes };
 }

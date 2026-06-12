@@ -29,7 +29,13 @@ export const ControlPanel: React.FC = () => {
     if (isRecording || isCountingIn) {
       stopRecording();
     } else {
-      if (countInEnabled) {
+      const isLoopPlaying = isPlaying && isLooping && rhythm && rhythm.notes.length > 0;
+
+      if (isLoopPlaying) {
+        setTimeout(() => {
+          startRecording(false, true);
+        }, 50);
+      } else if (countInEnabled) {
         if (!isPlaying && rhythm && rhythm.notes.length > 0) {
           startPlayback(true);
         }
@@ -41,7 +47,7 @@ export const ControlPanel: React.FC = () => {
           startPlayback(true);
         }
         setTimeout(() => {
-          startRecording(false);
+          startRecording(false, false);
         }, 50);
       }
     }

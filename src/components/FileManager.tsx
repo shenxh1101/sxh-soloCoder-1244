@@ -26,6 +26,7 @@ export const FileManager: React.FC = () => {
     }
 
     const dataToExport: RhythmData = {
+      id: rhythm.id,
       version: '1.0',
       name: rhythm.name || '我的节奏',
       createdAt: rhythm.createdAt || Date.now(),
@@ -79,6 +80,12 @@ export const FileManager: React.FC = () => {
         ...note,
         id: note.id || `imported_${Date.now()}_${i}`,
       }));
+
+      if (!rhythmData.id) {
+        rhythmData.id = `imported_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      } else {
+        rhythmData.id = `${rhythmData.id}_loaded_${Date.now()}`;
+      }
 
       const volumes: Record<string, number> = {};
       DRUM_CONFIGS.forEach(drum => {

@@ -18,7 +18,6 @@ export const TimelineEditor: React.FC = () => {
   const bpm = useDrumStore(state => state.metronomeBpm);
   const timeSignature = useDrumStore(state => state.metronomeTimeSignature);
   const playheadPosition = useDrumStore(state => state.playheadPosition);
-  const playbackSpeed = useDrumStore(state => state.playbackSpeed);
   const timelineZoom = useDrumStore(state => state.timelineZoom);
   const setTimelineZoom = useDrumStore(state => state.setTimelineZoom);
   const selectedNoteId = useDrumStore(state => state.timelineSelection.noteId);
@@ -38,7 +37,7 @@ export const TimelineEditor: React.FC = () => {
     ? Math.max(rhythm.duration, msPerBar * 2)
     : msPerBar * 4;
 
-  const pixelsPerMs = (timelineZoom * 0.15) / playbackSpeed;
+  const pixelsPerMs = timelineZoom * 0.15;
   const totalWidth = totalDuration * pixelsPerMs;
 
   const notesByDrum = useCallback(() => {

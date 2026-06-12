@@ -26,6 +26,7 @@ interface DrumState {
   isLooping: boolean;
   rhythm: RhythmData | null;
   recordingStartTime: number;
+  recordingUsesPlayhead: boolean;
   scheduledTimeouts: number[];
   scheduledAudioIds: number[];
 
@@ -107,6 +108,7 @@ export const useDrumStore = create<DrumState>((set, get) => ({
   isLooping: false,
   rhythm: null,
   recordingStartTime: 0,
+  recordingUsesPlayhead: false,
   scheduledTimeouts: [],
   scheduledAudioIds: [],
 
@@ -114,10 +116,13 @@ export const useDrumStore = create<DrumState>((set, get) => ({
     const state = get();
     const now = performance.now();
 
+    const isPlayingAndHasRhythm = state.isPlaying && state.rhythm && state.rhythm.notes.length > 0;
+
     if (!state.rhythm || state.rhythm.notes.length === 0) {
       set({
         isRecording: !withCountIn,
         recordingStartTime: now,
+        recordingUsesPlayhead: false,
         scheduledTimeouts: [],
         rhythm: {
           version: '1.0',
@@ -134,12 +139,14 @@ export const useDrumStore = create<DrumState>((set, get) => ({
       if (withCountIn) {
         set({
           recordingStartTime: now,
+          recordingUsesPlayhead: isPlayingAndHasRhythm,
           scheduledTimeouts: [],
         });
       } else {
         set({
           isRecording: true,
           recordingStartTime: now,
+          recordingUsesPlayhead: isPlayingAndHasRhythm,
           scheduledTimeouts: [],
           rhythm: {
             ...state.rhythm,
@@ -194,8 +201,15 @@ export const useDrumStore = create<DrumState>((set, get) => ({
 
   addNote: (note) => {
     const state = get();
+    let noteTime = note.time;
+
+    if (state.recordingUsesPlayhead && state.isLooping && state.rhythm) {
+      noteTime = state.playheadPosition;
+    }
+
     const newNote: Note = {
       ...note,
+      time: noteTime,
       id: generateNoteId(),
     };
 
@@ -215,7 +229,7 @@ export const useDrumStore = create<DrumState>((set, get) => ({
           version: '1.0',
           name: '我的节奏',
           createdAt: Date.now(),
-          duration: note.time + 500,
+          duration: noteTime + 500,
           bpm: state.metronomeBpm,
           timeSignature: state.metronomeTimeSignature,
           notes: [newNote],
@@ -332,12 +346,12 @@ export function validateRhythmData(data: unknown): { valid: boolean; error?: Loa
 
   const obj = data as Record<string, unknown>;
 
-  if (obj.version !== '1.0') {
+  if (!('notes' in obj)) {
     return {
       valid: false,
       error: {
-        type: 'invalid_version',
-        message: `不支持的文件版本: ${obj.version}，请使用版本 1.0`
+        type: 'invalid_file',
+        message: '这不是节奏文件，缺少 notes 字段。请确认是否加载了正确的 .drums.json 文件'
       }
     };
   }
@@ -347,7 +361,27 @@ export function validateRhythmData(data: unknown): { valid: boolean; error?: Loa
       valid: false,
       error: {
         type: 'invalid_notes_data',
-        message: '音符数据格式无效，notes 字段必须是数组'
+        message: '节奏文件损坏，notes 字段不是有效的数组格式'
+      }
+    };
+  }
+
+  if (!('version' in obj)) {
+    return {
+      valid: false,
+      error: {
+        type: 'invalid_file',
+        message: '这不是 V-DRUM 节奏文件，缺少版本标识'
+      }
+    };
+  }
+
+  if (obj.version !== '1.0') {
+    return {
+      valid: false,
+      error: {
+        type: 'invalid_version',
+        message: `不支持的文件版本: ${obj.version}，请使用版本 1.0 的节奏文件`
       }
     };
   }
@@ -357,7 +391,7 @@ export function validateRhythmData(data: unknown): { valid: boolean; error?: Loa
       valid: false,
       error: {
         type: 'no_notes',
-        message: '节奏文件不包含任何音符数据'
+        message: '节奏文件不包含任何鼓点音符'
       }
     };
   }

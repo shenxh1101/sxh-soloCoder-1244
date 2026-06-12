@@ -2,9 +2,11 @@ import { useEffect, useRef, useCallback } from 'react';
 import { useDrumStore } from '@/store/drumStore';
 import { playMetronomeClick } from '@/utils/audioUtils';
 import { getBeatsPerMeasure, getMsPerBeat } from '@/utils/drumConfig';
+import { ensureAudioContext, getAudioContext } from '@/audio/engine';
+
+let metronomeGainNode: GainNode | null = null;
 
 export function useMetronome() {
-  const audioContext = useDrumStore(state => state.audioContext);
   const metronomeEnabled = useDrumStore(state => state.metronomeEnabled);
   const bpm = useDrumStore(state => state.metronomeBpm);
   const timeSignature = useDrumStore(state => state.metronomeTimeSignature);
@@ -16,7 +18,6 @@ export function useMetronome() {
   const setIsCountingIn = useDrumStore(state => state.setIsCountingIn);
   const setMetronomeCurrentBeat = useDrumStore(state => state.setMetronomeCurrentBeat);
 
-  const metronomeGainRef = useRef<GainNode | null>(null);
   const schedulerRef = useRef<number | null>(null);
   const nextBeatTimeRef = useRef<number>(0);
   const currentBeatRef = useRef<number>(0);
@@ -25,33 +26,23 @@ export function useMetronome() {
 
   const beatsPerMeasure = getBeatsPerMeasure(timeSignature);
 
-  const startCountIn = useCallback(() => {
-    const ctx = useDrumStore.getState().audioContext;
-    if (!ctx) return;
+  const getMetronomeGain = useCallback((): GainNode | null => {
+    const ctx = getAudioContext();
+    if (!ctx) return null;
 
-    if (!metronomeGainRef.current) {
+    if (!metronomeGainNode) {
       const gain = ctx.createGain();
       gain.gain.value = 0.5;
       gain.connect(ctx.destination);
-      metronomeGainRef.current = gain;
+      metronomeGainNode = gain;
     }
-
-    setIsCountingIn(true);
-    setMetronomeCurrentBeat(0);
-    countInBeatsRemainingRef.current = beatsPerMeasure * countInBars;
-    currentBeatRef.current = 0;
-    nextBeatTimeRef.current = ctx.currentTime + 0.05;
-    isRunningRef.current = true;
-
-    if (schedulerRef.current) {
-      clearInterval(schedulerRef.current);
-    }
-    schedulerRef.current = window.setInterval(scheduler, 25);
-  }, [beatsPerMeasure, countInBars, setIsCountingIn, setMetronomeCurrentBeat]);
+    return metronomeGainNode;
+  }, []);
 
   const scheduler = useCallback(() => {
-    const ctx = useDrumStore.getState().audioContext;
-    if (!ctx || !metronomeGainRef.current || !isRunningRef.current) return;
+    const ctx = getAudioContext();
+    const metronomeGain = getMetronomeGain();
+    if (!ctx || !metronomeGain || !isRunningRef.current) return;
 
     const lookahead = 0.1;
     const secondsPerBeat = getMsPerBeat(useDrumStore.getState().metronomeBpm) / 1000;
@@ -66,7 +57,7 @@ export function useMetronome() {
       if (countingIn && countInBeatsRemainingRef.current > 0) {
         playMetronomeClick(
           ctx,
-          metronomeGainRef.current,
+          metronomeGain,
           countInBeatsRemainingRef.current === 1 || isStrong,
           nextBeatTimeRef.current
         );
@@ -91,7 +82,7 @@ export function useMetronome() {
       } else if (useDrumStore.getState().metronomeEnabled && !countingIn) {
         playMetronomeClick(
           ctx,
-          metronomeGainRef.current,
+          metronomeGain,
           isStrong,
           nextBeatTimeRef.current
         );
@@ -106,21 +97,40 @@ export function useMetronome() {
       nextBeatTimeRef.current += secondsPerBeat;
       currentBeatRef.current++;
     }
-  }, [beatsPerMeasure, setMetronomeCurrentBeat, setIsCountingIn, startRecording]);
+  }, [beatsPerMeasure, setMetronomeCurrentBeat, setIsCountingIn, startRecording, getMetronomeGain]);
+
+  const startCountIn = useCallback(() => {
+    const ctx = ensureAudioContext();
+    if (!ctx) return;
+
+    const metronomeGain = getMetronomeGain();
+    if (!metronomeGain) return;
+
+    setIsCountingIn(true);
+    setMetronomeCurrentBeat(0);
+    countInBeatsRemainingRef.current = beatsPerMeasure * countInBars;
+    currentBeatRef.current = 0;
+    nextBeatTimeRef.current = ctx.currentTime + 0.05;
+    isRunningRef.current = true;
+
+    if (schedulerRef.current) {
+      clearInterval(schedulerRef.current);
+    }
+    schedulerRef.current = window.setInterval(scheduler, 25);
+  }, [beatsPerMeasure, countInBars, setIsCountingIn, setMetronomeCurrentBeat, scheduler, getMetronomeGain, ensureAudioContext]);
 
   useEffect(() => {
     const shouldRun = metronomeEnabled || isCountingIn;
 
-    if (shouldRun && audioContext) {
-      if (!metronomeGainRef.current) {
-        const gain = audioContext.createGain();
-        gain.gain.value = 0.5;
-        gain.connect(audioContext.destination);
-        metronomeGainRef.current = gain;
-      }
+    if (shouldRun) {
+      const ctx = ensureAudioContext();
+      if (!ctx) return;
+
+      const metronomeGain = getMetronomeGain();
+      if (!metronomeGain) return;
 
       if (!isCountingIn) {
-        nextBeatTimeRef.current = audioContext.currentTime + 0.05;
+        nextBeatTimeRef.current = ctx.currentTime + 0.05;
         currentBeatRef.current = 0;
         isRunningRef.current = true;
       }
@@ -147,7 +157,7 @@ export function useMetronome() {
         isRunningRef.current = false;
       }
     };
-  }, [metronomeEnabled, isCountingIn, audioContext, scheduler, setMetronomeCurrentBeat]);
+  }, [metronomeEnabled, isCountingIn, scheduler, setMetronomeCurrentBeat, getMetronomeGain, ensureAudioContext]);
 
   useEffect(() => {
     if (!isRecording && !isCountingIn && !metronomeEnabled) {

@@ -1,6 +1,10 @@
 import { create } from 'zustand';
-import { RhythmData, Note } from '@/types';
-import { DRUM_CONFIGS, DEFAULT_BPM, DEFAULT_TIME_SIGNATURE, DEFAULT_PLAYBACK_SPEED } from '@/utils/drumConfig';
+import { RhythmData, Note, LoadErrorType, LoadError, TimelineSelection } from '@/types';
+import { DRUM_CONFIGS, DEFAULT_BPM, DEFAULT_TIME_SIGNATURE, DEFAULT_PLAYBACK_SPEED, TIME_SIGNATURES } from '@/utils/drumConfig';
+
+function generateNoteId(): string {
+  return `note_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
 
 interface DrumState {
   audioContext: AudioContext | null;
@@ -23,14 +27,18 @@ interface DrumState {
   rhythm: RhythmData | null;
   recordingStartTime: number;
   scheduledTimeouts: number[];
+  scheduledAudioIds: number[];
 
-  startRecording: () => void;
+  startRecording: (withCountIn?: boolean) => void;
   stopRecording: () => void;
   startPlayback: (loop?: boolean) => void;
   stopPlayback: () => void;
   toggleLooping: () => void;
-  addNote: (note: Note) => void;
+  addNote: (note: Omit<Note, 'id'>) => void;
+  updateNote: (noteId: string, updates: Partial<Note>) => void;
+  deleteNote: (noteId: string) => void;
   addScheduledTimeout: (id: number) => void;
+  addScheduledAudioId: (id: number) => void;
   clearScheduledTimeouts: () => void;
   clearRhythm: () => void;
   setRhythm: (rhythm: RhythmData | null) => void;
@@ -39,10 +47,27 @@ interface DrumState {
   metronomeBpm: number;
   metronomeTimeSignature: string;
   metronomeCurrentBeat: number;
+  countInEnabled: boolean;
+  countInBars: number;
+  isCountingIn: boolean;
   setMetronomeEnabled: (enabled: boolean) => void;
   setMetronomeBpm: (bpm: number) => void;
   setMetronomeTimeSignature: (ts: string) => void;
   setMetronomeCurrentBeat: (beat: number) => void;
+  setCountInEnabled: (enabled: boolean) => void;
+  setCountInBars: (bars: number) => void;
+  setIsCountingIn: (isCounting: boolean) => void;
+
+  loadError: LoadError | null;
+  setLoadError: (error: LoadError | null) => void;
+
+  timelineSelection: TimelineSelection;
+  setSelectedNote: (noteId: string | null) => void;
+  timelineZoom: number;
+  setTimelineZoom: (zoom: number) => void;
+
+  playheadPosition: number;
+  setPlayheadPosition: (pos: number) => void;
 }
 
 const initialVolumes: Record<string, number> = {};
@@ -83,59 +108,105 @@ export const useDrumStore = create<DrumState>((set, get) => ({
   rhythm: null,
   recordingStartTime: 0,
   scheduledTimeouts: [],
+  scheduledAudioIds: [],
 
-  startRecording: () => {
+  startRecording: (withCountIn = false) => {
+    const state = get();
     const now = performance.now();
-    set({
-      isRecording: true,
-      recordingStartTime: now,
-      isPlaying: false,
-      scheduledTimeouts: [],
-      rhythm: get().rhythm || {
-        version: '1.0',
-        name: '我的节奏',
-        createdAt: Date.now(),
-        duration: 0,
-        bpm: get().metronomeBpm,
-        timeSignature: get().metronomeTimeSignature,
-        notes: [],
-        drumVolumes: { ...get().drumVolumes }
+
+    if (!state.rhythm || state.rhythm.notes.length === 0) {
+      set({
+        isRecording: !withCountIn,
+        recordingStartTime: now,
+        scheduledTimeouts: [],
+        rhythm: {
+          version: '1.0',
+          name: '我的节奏',
+          createdAt: Date.now(),
+          duration: 0,
+          bpm: state.metronomeBpm,
+          timeSignature: state.metronomeTimeSignature,
+          notes: [],
+          drumVolumes: { ...state.drumVolumes }
+        }
+      });
+    } else {
+      if (withCountIn) {
+        set({
+          recordingStartTime: now,
+          scheduledTimeouts: [],
+        });
+      } else {
+        set({
+          isRecording: true,
+          recordingStartTime: now,
+          scheduledTimeouts: [],
+          rhythm: {
+            ...state.rhythm,
+            bpm: state.metronomeBpm,
+            timeSignature: state.metronomeTimeSignature,
+          }
+        });
       }
-    });
+    }
   },
 
   stopRecording: () => {
     const state = get();
-    if (state.rhythm) {
-      const duration = performance.now() - state.recordingStartTime;
+    if (state.rhythm && state.rhythm.notes.length > 0) {
+      const maxNoteTime = Math.max(...state.rhythm.notes.map(n => n.time));
+      const duration = Math.max(maxNoteTime + 500, state.rhythm.duration);
       set({
         isRecording: false,
+        isCountingIn: false,
         rhythm: { ...state.rhythm, duration }
       });
     } else {
-      set({ isRecording: false });
+      set({
+        isRecording: false,
+        isCountingIn: false,
+      });
     }
   },
 
   startPlayback: (loop = false) => {
-    set({ isPlaying: true, isLooping: loop, scheduledTimeouts: [] });
+    set({
+      isPlaying: true,
+      isLooping: loop,
+      scheduledTimeouts: [],
+      scheduledAudioIds: [],
+      playheadPosition: 0,
+    });
   },
 
   stopPlayback: () => {
     const state = get();
     state.scheduledTimeouts.forEach(id => clearTimeout(id));
-    set({ isPlaying: false, isLooping: false, scheduledTimeouts: [] });
+    set({
+      isPlaying: false,
+      scheduledTimeouts: [],
+      scheduledAudioIds: [],
+      playheadPosition: 0,
+    });
   },
 
   toggleLooping: () => set(state => ({ isLooping: !state.isLooping })),
 
   addNote: (note) => {
     const state = get();
+    const newNote: Note = {
+      ...note,
+      id: generateNoteId(),
+    };
+
     if (state.rhythm) {
+      const newNotes = [...state.rhythm.notes, newNote];
+      const maxTime = Math.max(...newNotes.map(n => n.time));
       set({
         rhythm: {
           ...state.rhythm,
-          notes: [...state.rhythm.notes, note]
+          notes: newNotes,
+          duration: Math.max(state.rhythm.duration, maxTime + 500),
         }
       });
     } else {
@@ -144,14 +215,47 @@ export const useDrumStore = create<DrumState>((set, get) => ({
           version: '1.0',
           name: '我的节奏',
           createdAt: Date.now(),
-          duration: note.time + 100,
+          duration: note.time + 500,
           bpm: state.metronomeBpm,
           timeSignature: state.metronomeTimeSignature,
-          notes: [note],
+          notes: [newNote],
           drumVolumes: { ...state.drumVolumes }
         }
       });
     }
+  },
+
+  updateNote: (noteId, updates) => {
+    const state = get();
+    if (!state.rhythm) return;
+
+    const updatedNotes = state.rhythm.notes.map(note =>
+      note.id === noteId ? { ...note, ...updates } : note
+    );
+
+    const maxTime = Math.max(...updatedNotes.map(n => n.time));
+    set({
+      rhythm: {
+        ...state.rhythm,
+        notes: updatedNotes,
+        duration: Math.max(state.rhythm.duration, maxTime + 500),
+      }
+    });
+  },
+
+  deleteNote: (noteId) => {
+    const state = get();
+    if (!state.rhythm) return;
+
+    const updatedNotes = state.rhythm.notes.filter(note => note.id !== noteId);
+
+    set({
+      rhythm: {
+        ...state.rhythm,
+        notes: updatedNotes,
+      },
+      timelineSelection: { noteId: null }
+    });
   },
 
   addScheduledTimeout: (id) => {
@@ -160,19 +264,128 @@ export const useDrumStore = create<DrumState>((set, get) => ({
     }));
   },
 
-  clearScheduledTimeouts: () => {
-    set({ scheduledTimeouts: [] });
+  addScheduledAudioId: (id) => {
+    set(state => ({
+      scheduledAudioIds: [...state.scheduledAudioIds, id]
+    }));
   },
 
-  clearRhythm: () => set({ rhythm: null, isPlaying: false, isLooping: false }),
-  setRhythm: (rhythm) => set({ rhythm }),
+  clearScheduledTimeouts: () => {
+    set({ scheduledTimeouts: [], scheduledAudioIds: [] });
+  },
+
+  clearRhythm: () => {
+    const state = get();
+    state.scheduledTimeouts.forEach(id => clearTimeout(id));
+    set({
+      rhythm: null,
+      isPlaying: false,
+      isLooping: false,
+      isRecording: false,
+      scheduledTimeouts: [],
+      scheduledAudioIds: [],
+      playheadPosition: 0,
+      timelineSelection: { noteId: null }
+    });
+  },
+
+  setRhythm: (rhythm) => set({ rhythm, timelineSelection: { noteId: null } }),
 
   metronomeEnabled: false,
   metronomeBpm: DEFAULT_BPM,
   metronomeTimeSignature: DEFAULT_TIME_SIGNATURE,
   metronomeCurrentBeat: 0,
+  countInEnabled: true,
+  countInBars: 1,
+  isCountingIn: false,
+
   setMetronomeEnabled: (enabled) => set({ metronomeEnabled: enabled }),
   setMetronomeBpm: (bpm) => set({ metronomeBpm: bpm }),
   setMetronomeTimeSignature: (ts) => set({ metronomeTimeSignature: ts }),
-  setMetronomeCurrentBeat: (beat) => set({ metronomeCurrentBeat: beat })
+  setMetronomeCurrentBeat: (beat) => set({ metronomeCurrentBeat: beat }),
+  setCountInEnabled: (enabled) => set({ countInEnabled: enabled }),
+  setCountInBars: (bars) => set({ countInBars: bars }),
+  setIsCountingIn: (isCountingIn) => set({ isCountingIn }),
+
+  loadError: null,
+  setLoadError: (error) => set({ loadError: error }),
+
+  timelineSelection: { noteId: null },
+  setSelectedNote: (noteId) => set({ timelineSelection: { noteId } }),
+  timelineZoom: 1,
+  setTimelineZoom: (zoom) => set({ timelineZoom: zoom }),
+
+  playheadPosition: 0,
+  setPlayheadPosition: (pos) => set({ playheadPosition: pos }),
 }));
+
+export function validateRhythmData(data: unknown): { valid: boolean; error?: LoadError } {
+  if (!data || typeof data !== 'object') {
+    return {
+      valid: false,
+      error: {
+        type: 'invalid_file',
+        message: '文件格式无效，不是有效的 JSON 对象'
+      }
+    };
+  }
+
+  const obj = data as Record<string, unknown>;
+
+  if (obj.version !== '1.0') {
+    return {
+      valid: false,
+      error: {
+        type: 'invalid_version',
+        message: `不支持的文件版本: ${obj.version}，请使用版本 1.0`
+      }
+    };
+  }
+
+  if (!Array.isArray(obj.notes)) {
+    return {
+      valid: false,
+      error: {
+        type: 'invalid_notes_data',
+        message: '音符数据格式无效，notes 字段必须是数组'
+      }
+    };
+  }
+
+  if (obj.notes.length === 0) {
+    return {
+      valid: false,
+      error: {
+        type: 'no_notes',
+        message: '节奏文件不包含任何音符数据'
+      }
+    };
+  }
+
+  const hasInvalidNote = obj.notes.some((n: unknown) => {
+    const note = n as Record<string, unknown>;
+    return typeof note.drumId !== 'string' || typeof note.time !== 'number' || typeof note.velocity !== 'number';
+  });
+
+  if (hasInvalidNote) {
+    return {
+      valid: false,
+      error: {
+        type: 'invalid_notes_data',
+        message: '部分音符数据格式不正确，缺少 drumId、time 或 velocity 字段'
+      }
+    };
+  }
+
+  if (typeof obj.timeSignature === 'string' && !TIME_SIGNATURES.includes(obj.timeSignature)) {
+    return {
+      valid: false,
+      error: {
+        type: 'unsupported_time_signature',
+        message: `不支持的拍号: ${obj.timeSignature}，支持的拍号: ${TIME_SIGNATURES.join(', ')}`
+      }
+    };
+  }
+
+  return { valid: true };
+}

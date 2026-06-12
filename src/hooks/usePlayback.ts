@@ -8,6 +8,7 @@ import { playDrumSound } from '@/utils/audioUtils';
 export function usePlayback() {
   const isPlaying = useDrumStore(state => state.isPlaying);
   const isLooping = useDrumStore(state => state.isLooping);
+  const isRecording = useDrumStore(state => state.isRecording);
   const rhythm = useDrumStore(state => state.rhythm);
   const playbackSpeed = useDrumStore(state => state.playbackSpeed);
   const stopPlayback = useDrumStore(state => state.stopPlayback);
@@ -15,9 +16,12 @@ export function usePlayback() {
   const addScheduledTimeout = useDrumStore(state => state.addScheduledTimeout);
   const triggerPad = useDrumStore(state => state.triggerPad);
   const releasePad = useDrumStore(state => state.releasePad);
+  const setPlayheadPosition = useDrumStore(state => state.setPlayheadPosition);
 
   const { audioContextRef, gainNodesRef } = useAudioEngine();
   const loopTimeoutRef = useRef<number | null>(null);
+  const playheadIntervalRef = useRef<number | null>(null);
+  const playbackStartTimeRef = useRef<number>(0);
 
   const schedulePlayback = useCallback((startDelay: number = 0) => {
     if (!rhythm || rhythm.notes.length === 0) return;
@@ -26,6 +30,8 @@ export function usePlayback() {
     if (!ctx) return;
 
     const audioStartTime = ctx.currentTime + startDelay;
+    const perfStartTime = performance.now() + startDelay * 1000;
+    playbackStartTimeRef.current = perfStartTime;
 
     rhythm.notes.forEach(note => {
       const adjustedTime = note.time / playbackSpeed;
@@ -41,7 +47,6 @@ export function usePlayback() {
           ctx,
           drumConfig.synth as DrumSynthConfig,
           gainNode,
-          playbackSpeed,
           note.velocity,
           scheduledAudioTime
         );
@@ -61,6 +66,10 @@ export function usePlayback() {
         clearTimeout(loopTimeoutRef.current);
         loopTimeoutRef.current = null;
       }
+      if (playheadIntervalRef.current) {
+        clearInterval(playheadIntervalRef.current);
+        playheadIntervalRef.current = null;
+      }
       return;
     }
 
@@ -68,21 +77,37 @@ export function usePlayback() {
 
     schedulePlayback(0.05);
 
+    if (playheadIntervalRef.current) {
+      clearInterval(playheadIntervalRef.current);
+    }
+    playheadIntervalRef.current = window.setInterval(() => {
+      const elapsed = performance.now() - playbackStartTimeRef.current;
+      if (elapsed >= 0) {
+        const progress = Math.min(1, elapsed / adjustedDuration);
+        setPlayheadPosition(progress * rhythm.duration);
+      }
+    }, 30);
+    addScheduledTimeout(playheadIntervalRef.current);
+
     if (isLooping) {
       const setupNextLoop = () => {
         loopTimeoutRef.current = window.setTimeout(() => {
           if (useDrumStore.getState().isLooping) {
-            stopPlayback();
-            setTimeout(() => {
-              startPlayback(true);
-            }, 50);
+            if (playheadIntervalRef.current) {
+              clearInterval(playheadIntervalRef.current);
+            }
+            setPlayheadPosition(0);
+            schedulePlayback(0);
+            setupNextLoop();
           }
-        }, adjustedDuration + 150);
+        }, adjustedDuration + 50);
       };
       setupNextLoop();
     } else {
       loopTimeoutRef.current = window.setTimeout(() => {
-        stopPlayback();
+        if (!isRecording) {
+          stopPlayback();
+        }
       }, adjustedDuration + 300);
     }
 
@@ -91,8 +116,12 @@ export function usePlayback() {
         clearTimeout(loopTimeoutRef.current);
         loopTimeoutRef.current = null;
       }
+      if (playheadIntervalRef.current) {
+        clearInterval(playheadIntervalRef.current);
+        playheadIntervalRef.current = null;
+      }
     };
-  }, [isPlaying, rhythm, isLooping, playbackSpeed, schedulePlayback, stopPlayback, startPlayback]);
+  }, [isPlaying, rhythm, isLooping, playbackSpeed, schedulePlayback, stopPlayback, setPlayheadPosition, addScheduledTimeout, isRecording]);
 
   return { schedulePlayback };
 }

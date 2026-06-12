@@ -4,7 +4,6 @@ export function playDrumSound(
   ctx: AudioContext,
   synth: DrumSynthConfig,
   gainNode: GainNode,
-  playbackRate: number = 1,
   velocity: number = 1,
   when: number = 0
 ) {
@@ -15,25 +14,25 @@ export function playDrumSound(
 
   switch (synth.type) {
     case 'kick':
-      createKick(ctx, masterGain, synth, playbackRate, startTime);
+      createKick(ctx, masterGain, synth, startTime);
       break;
     case 'snare':
-      createSnare(ctx, masterGain, synth, playbackRate, startTime);
+      createSnare(ctx, masterGain, synth, startTime);
       break;
     case 'tom':
-      createTom(ctx, masterGain, synth, playbackRate, startTime);
+      createTom(ctx, masterGain, synth, startTime);
       break;
     case 'hihat':
-      createHiHat(ctx, masterGain, synth, playbackRate, startTime);
+      createHiHat(ctx, masterGain, synth, startTime);
       break;
     case 'crash':
-      createCrash(ctx, masterGain, synth, playbackRate, startTime);
+      createCrash(ctx, masterGain, synth, startTime);
       break;
     case 'ride':
-      createRide(ctx, masterGain, synth, playbackRate, startTime);
+      createRide(ctx, masterGain, synth, startTime);
       break;
     case 'clap':
-      createClap(ctx, masterGain, synth, playbackRate, startTime);
+      createClap(ctx, masterGain, synth, startTime);
       break;
   }
 }
@@ -42,15 +41,14 @@ function createKick(
   ctx: AudioContext,
   output: GainNode,
   synth: DrumSynthConfig,
-  playbackRate: number,
   start: number
 ) {
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
 
   const baseFreq = synth.frequency || 60;
-  osc.frequency.setValueAtTime(baseFreq * playbackRate, start);
-  osc.frequency.exponentialRampToValueAtTime(30 * playbackRate, start + 0.15);
+  osc.frequency.setValueAtTime(baseFreq, start);
+  osc.frequency.exponentialRampToValueAtTime(30, start + 0.15);
 
   gain.gain.setValueAtTime(0, start);
   gain.gain.linearRampToValueAtTime(1, start + (synth.attack || 0.001));
@@ -67,7 +65,6 @@ function createSnare(
   ctx: AudioContext,
   output: GainNode,
   synth: DrumSynthConfig,
-  playbackRate: number,
   start: number
 ) {
   const noiseBufferSize = ctx.sampleRate * (synth.decay || 0.2);
@@ -79,7 +76,6 @@ function createSnare(
 
   const noise = ctx.createBufferSource();
   noise.buffer = noiseBuffer;
-  noise.playbackRate.value = playbackRate;
 
   const noiseFilter = ctx.createBiquadFilter();
   noiseFilter.type = 'highpass';
@@ -97,8 +93,8 @@ function createSnare(
   const osc = ctx.createOscillator();
   const oscGain = ctx.createGain();
   osc.type = 'triangle';
-  osc.frequency.setValueAtTime(200 * playbackRate, start);
-  osc.frequency.exponentialRampToValueAtTime(100 * playbackRate, start + 0.1);
+  osc.frequency.setValueAtTime(200, start);
+  osc.frequency.exponentialRampToValueAtTime(100, start + 0.1);
 
   oscGain.gain.setValueAtTime(0, start);
   oscGain.gain.linearRampToValueAtTime(0.5, start + 0.002);
@@ -117,7 +113,6 @@ function createTom(
   ctx: AudioContext,
   output: GainNode,
   synth: DrumSynthConfig,
-  playbackRate: number,
   start: number
 ) {
   const osc = ctx.createOscillator();
@@ -125,8 +120,8 @@ function createTom(
 
   osc.type = 'sine';
   const baseFreq = synth.frequency || 150;
-  osc.frequency.setValueAtTime(baseFreq * playbackRate, start);
-  osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.5 * playbackRate, start + (synth.decay || 0.4));
+  osc.frequency.setValueAtTime(baseFreq, start);
+  osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.5, start + (synth.decay || 0.4));
 
   gain.gain.setValueAtTime(0, start);
   gain.gain.linearRampToValueAtTime(1, start + (synth.attack || 0.002));
@@ -143,7 +138,6 @@ function createHiHat(
   ctx: AudioContext,
   output: GainNode,
   synth: DrumSynthConfig,
-  playbackRate: number,
   start: number
 ) {
   const noiseBufferSize = ctx.sampleRate * (synth.decay || 0.1);
@@ -155,7 +149,6 @@ function createHiHat(
 
   const noise = ctx.createBufferSource();
   noise.buffer = noiseBuffer;
-  noise.playbackRate.value = playbackRate;
 
   const highpass = ctx.createBiquadFilter();
   highpass.type = 'highpass';
@@ -183,7 +176,6 @@ function createCrash(
   ctx: AudioContext,
   output: GainNode,
   synth: DrumSynthConfig,
-  playbackRate: number,
   start: number
 ) {
   const noiseBufferSize = ctx.sampleRate * (synth.decay || 1.2);
@@ -195,7 +187,6 @@ function createCrash(
 
   const noise = ctx.createBufferSource();
   noise.buffer = noiseBuffer;
-  noise.playbackRate.value = playbackRate;
 
   const highpass = ctx.createBiquadFilter();
   highpass.type = 'highpass';
@@ -218,7 +209,6 @@ function createRide(
   ctx: AudioContext,
   output: GainNode,
   synth: DrumSynthConfig,
-  playbackRate: number,
   start: number
 ) {
   const noiseBufferSize = ctx.sampleRate * (synth.decay || 0.8);
@@ -230,7 +220,6 @@ function createRide(
 
   const noise = ctx.createBufferSource();
   noise.buffer = noiseBuffer;
-  noise.playbackRate.value = playbackRate;
 
   const highpass = ctx.createBiquadFilter();
   highpass.type = 'highpass';
@@ -238,7 +227,7 @@ function createRide(
 
   const osc = ctx.createOscillator();
   osc.type = 'square';
-  osc.frequency.value = 600 * playbackRate;
+  osc.frequency.value = 600;
   const oscGain = ctx.createGain();
   oscGain.gain.value = 0.1;
 
@@ -263,7 +252,6 @@ function createClap(
   ctx: AudioContext,
   output: GainNode,
   synth: DrumSynthConfig,
-  playbackRate: number,
   start: number
 ) {
   const noiseBufferSize = ctx.sampleRate * (synth.decay || 0.2);
@@ -275,7 +263,7 @@ function createClap(
 
   const bandpass = ctx.createBiquadFilter();
   bandpass.type = 'bandpass';
-  bandpass.frequency.value = 1500 * playbackRate;
+  bandpass.frequency.value = 1500;
   bandpass.Q.value = 0.5;
 
   const gain = ctx.createGain();
@@ -285,7 +273,6 @@ function createClap(
 
   const noise = ctx.createBufferSource();
   noise.buffer = noiseBuffer;
-  noise.playbackRate.value = playbackRate;
 
   noise.connect(bandpass);
   bandpass.connect(gain);

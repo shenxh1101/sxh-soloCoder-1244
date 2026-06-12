@@ -7,7 +7,6 @@ import { DrumSynthConfig } from '@/types';
 export function useAudioEngine() {
   const setAudioContext = useDrumStore(state => state.setAudioContext);
   const drumVolumes = useDrumStore(state => state.drumVolumes);
-  const playbackSpeed = useDrumStore(state => state.playbackSpeed);
   const isRecording = useDrumStore(state => state.isRecording);
   const recordingStartTime = useDrumStore(state => state.recordingStartTime);
   const addNote = useDrumStore(state => state.addNote);
@@ -73,7 +72,6 @@ export function useAudioEngine() {
       ctx,
       drumConfig.synth as DrumSynthConfig,
       gainNode,
-      playbackSpeed,
       velocity,
       ctx.currentTime
     );
@@ -86,7 +84,7 @@ export function useAudioEngine() {
         velocity
       });
     }
-  }, [ensureAudioContext, playbackSpeed, isRecording, recordingStartTime, addNote, triggerPad, releasePad]);
+  }, [ensureAudioContext, isRecording, recordingStartTime, addNote, triggerPad, releasePad]);
 
   const playDrumAt = useCallback((drumId: string, velocity: number = 1, audioTime: number) => {
     const ctx = audioContextRef.current;
@@ -102,11 +100,10 @@ export function useAudioEngine() {
       ctx,
       drumConfig.synth as DrumSynthConfig,
       gainNode,
-      playbackSpeed,
       velocity,
       audioTime
     );
-  }, [playbackSpeed]);
+  }, []);
 
   return {
     ensureAudioContext,

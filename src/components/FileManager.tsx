@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
-import { Download, Upload } from 'lucide-react';
-import { useDrumStore } from '@/store/drumStore';
+import { Download, Upload, AlertTriangle, X } from 'lucide-react';
+import { useDrumStore, validateRhythmData } from '@/store/drumStore';
 import { RhythmData } from '@/types';
 import { DRUM_CONFIGS } from '@/utils/drumConfig';
 
@@ -13,18 +13,26 @@ export const FileManager: React.FC = () => {
   const setAllDrumVolumes = useDrumStore(state => state.setAllDrumVolumes);
   const setMetronomeBpm = useDrumStore(state => state.setMetronomeBpm);
   const setMetronomeTimeSignature = useDrumStore(state => state.setMetronomeTimeSignature);
+  const loadError = useDrumStore(state => state.loadError);
+  const setLoadError = useDrumStore(state => state.setLoadError);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleExport = () => {
+    setLoadError(null);
+
+    if (!rhythm || rhythm.notes.length === 0) {
+      return;
+    }
+
     const dataToExport: RhythmData = {
       version: '1.0',
-      name: rhythm?.name || '我的节奏',
-      createdAt: rhythm?.createdAt || Date.now(),
-      duration: rhythm?.duration || 0,
+      name: rhythm.name || '我的节奏',
+      createdAt: rhythm.createdAt || Date.now(),
+      duration: rhythm.duration || 0,
       bpm: metronomeBpm,
       timeSignature: metronomeTimeSignature,
-      notes: rhythm?.notes || [],
+      notes: rhythm.notes,
       drumVolumes: drumVolumes,
     };
 
@@ -43,44 +51,63 @@ export const FileManager: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    setLoadError(null);
+
     const reader = new FileReader();
     reader.onload = (event) => {
+      let data: unknown;
+
       try {
-        const data = JSON.parse(event.target?.result as string) as RhythmData;
-        
-        if (!data || !Array.isArray(data.notes)) {
-          alert('无效的节奏文件格式');
-          return;
-        }
-
-        const validNotes = data.notes.filter(note =>
-          note && typeof note.drumId === 'string' && typeof note.time === 'number'
-        );
-
-        const volumes: Record<string, number> = {};
-        DRUM_CONFIGS.forEach(drum => {
-          volumes[drum.id] = data.drumVolumes?.[drum.id] ?? drum.defaultVolume;
+        data = JSON.parse(event.target?.result as string);
+      } catch (parseErr) {
+        setLoadError({
+          type: 'invalid_json',
+          message: 'JSON 解析失败: 文件不是有效的 JSON 格式，请检查文件内容',
         });
-
-        setAllDrumVolumes(volumes);
-        if (data.bpm) setMetronomeBpm(data.bpm);
-        if (data.timeSignature) setMetronomeTimeSignature(data.timeSignature);
-
-        setRhythm({
-          ...data,
-          notes: validNotes,
-          drumVolumes: volumes,
-        });
-
-        alert(`成功加载节奏: ${data.name || '未命名'}\n共 ${validNotes.length} 个音符`);
-      } catch (err) {
-        alert('解析JSON文件失败，请检查文件格式');
-        console.error(err);
+        return;
       }
+
+      const validation = validateRhythmData(data);
+      if (!validation.valid && validation.error) {
+        setLoadError(validation.error);
+        return;
+      }
+
+      const rhythmData = data as RhythmData;
+
+      rhythmData.notes = rhythmData.notes.map((note, i) => ({
+        ...note,
+        id: note.id || `imported_${Date.now()}_${i}`,
+      }));
+
+      const volumes: Record<string, number> = {};
+      DRUM_CONFIGS.forEach(drum => {
+        volumes[drum.id] = rhythmData.drumVolumes?.[drum.id] ?? drum.defaultVolume;
+      });
+
+      setAllDrumVolumes(volumes);
+      if (rhythmData.bpm) setMetronomeBpm(rhythmData.bpm);
+      if (rhythmData.timeSignature) setMetronomeTimeSignature(rhythmData.timeSignature);
+
+      setRhythm({
+        ...rhythmData,
+        notes: rhythmData.notes,
+        drumVolumes: volumes,
+      });
     };
+
+    reader.onerror = () => {
+      setLoadError({
+        type: 'invalid_file',
+        message: '文件读取失败：无法读取选中的文件',
+      });
+    };
+
     reader.readAsText(file);
     e.target.value = '';
   };
+
+  const getErrorIcon = () => <AlertTriangle size={18} style={{ color: '#f59e0b' }} />;
 
   return (
     <div
@@ -101,6 +128,39 @@ export const FileManager: React.FC = () => {
         </h3>
       </div>
 
+      {/* 错误提示 */}
+      {loadError && (
+        <div
+          className="mb-4 p-3 rounded-xl flex items-start gap-3"
+          style={{
+            background: 'rgba(245, 158, 11, 0.1)',
+            border: '1px solid rgba(245, 158, 11, 0.3)',
+          }}
+        >
+          {getErrorIcon()}
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-2">
+              <span
+                className="text-xs font-bold"
+                style={{ color: '#f59e0b', fontFamily: 'Roboto Mono, monospace' }}
+              >
+                加载失败 · {loadError.type.toUpperCase().replace(/_/g, '-')}
+              </span>
+              <button
+                onClick={() => setLoadError(null)}
+                className="p-0.5 rounded hover:bg-white/10 transition-colors flex-shrink-0"
+                style={{ color: '#9ca3af' }}
+              >
+                <X size={12} />
+              </button>
+            </div>
+            <p className="text-xs mt-1 leading-relaxed" style={{ color: '#d1d5db' }}>
+              {loadError.message}
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="flex gap-3">
         <button
           onClick={handleExport}
@@ -118,7 +178,10 @@ export const FileManager: React.FC = () => {
         </button>
 
         <button
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => {
+            setLoadError(null);
+            fileInputRef.current?.click();
+          }}
           className="flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-bold text-sm transition-all duration-200"
           style={{
             background: 'linear-gradient(145deg, #2a2a32, #1a1a20)',
@@ -138,6 +201,24 @@ export const FileManager: React.FC = () => {
           className="hidden"
         />
       </div>
+
+      {/* 成功提示 */}
+      {rhythm && !loadError && rhythm.notes.length > 0 && (
+        <div
+          className="mt-3 px-3 py-2 rounded-lg text-xs flex items-center justify-between"
+          style={{
+            background: 'rgba(16, 185, 129, 0.08)',
+            border: '1px solid rgba(16, 185, 129, 0.2)',
+          }}
+        >
+          <span style={{ color: '#10b981' }}>
+            ✓ 已加载节奏: <strong>{rhythm.name || '未命名'}</strong>
+          </span>
+          <span style={{ color: '#6b7280', fontFamily: 'Roboto Mono, monospace' }}>
+            {rhythm.notes.length} 音符 · {(rhythm.duration / 1000).toFixed(1)}s · {rhythm.bpm} BPM
+          </span>
+        </div>
+      )}
 
       <p className="text-xs mt-3 leading-relaxed" style={{ color: '#52525b' }}>
         导出的JSON文件包含所有音符、音量设置和节拍器参数，可随时导入继续编辑

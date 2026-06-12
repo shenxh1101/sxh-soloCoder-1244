@@ -5,6 +5,7 @@ import { VolumeControls } from '@/components/VolumeControls';
 import { SpeedControl } from '@/components/SpeedControl';
 import { Metronome } from '@/components/Metronome';
 import { FileManager } from '@/components/FileManager';
+import { TimelineEditor } from '@/components/TimelineEditor';
 import { useAudioEngine } from '@/hooks/useAudioEngine';
 import { DRUM_CONFIGS } from '@/utils/drumConfig';
 import { useDrumStore } from '@/store/drumStore';
@@ -12,7 +13,6 @@ import { Drumstick } from 'lucide-react';
 
 export default function Home() {
   const { playDrum, ensureAudioContext } = useAudioEngine();
-  const pressedKeys = useDrumStore(state => state.activePads);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.repeat) return;
@@ -74,7 +74,7 @@ export default function Home() {
                 V-DRUM STUDIO
               </h1>
               <p className="text-xs" style={{ color: '#52525b' }}>
-                网页电子鼓模拟器 · 录音 · 节拍器
+                网页电子鼓模拟器 · 录音 · 叠加 · 编曲
               </p>
             </div>
           </div>
@@ -95,9 +95,15 @@ export default function Home() {
 
         {/* 主体布局 */}
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-5">
-          {/* 鼓组区域 */}
-          <div className="min-h-[560px] order-2 lg:order-1">
-            <DrumKit />
+          {/* 左侧：鼓组 + 时间线 */}
+          <div className="order-2 lg:order-1 flex flex-col gap-5">
+            {/* 鼓组区域 */}
+            <div className="min-h-[560px]">
+              <DrumKit />
+            </div>
+
+            {/* 时间线编辑器 */}
+            <TimelineEditor />
           </div>
 
           {/* 右侧控制面板 */}
